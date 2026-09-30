@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}대시보드{% endblock %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+
+<style>
+    .dashboard-container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    
+    .header-section { text-align: left; margin-bottom: 30px; }
+    .header-section h2 { margin: 0 0 15px 0; font-weight: 800; color: #333; font-size: 1.8rem; }
+    .month-select { padding: 5px 10px; font-size: 1rem; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; }
+    .total-amount-text { font-size: 2rem; font-weight: 800; margin-top: 15px; color: #000; }
+
+    .charts-row { display: flex; gap: 30px; margin-top: 20px; margin-bottom: 50px; }
+    
+    .chart-col { 
+        background: #fff; padding: 20px; border-radius: 10px; 
+        border: 1px solid #e0e0e0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); 
+        display: flex; flex-direction: column;
+    }
+    .chart-col h3 { margin-top: 0; margin-bottom: 10px; font-size: 1.4rem; font-weight: bold; color: #444; }
+
+    .wide { flex: 6; }   
+    .narrow { flex: 4; } 
+
+    .table-section { margin-bottom: 40px; }
+    .table-section h3 { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; color: #333; border-left: 4px solid #333; padding-left: 10px; }
+    table.custom-table { width: 100%; border-collapse: collapse; background-color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table.custom-table th, table.custom-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+    table.custom-table th { background-color: #f8f9fa; font-weight: 600; color: #555; }
+    .text-right { text-align: right !important; }
+</style>
+
+<div class="dashboard-container">
+    <div class="header-section">
+        <h2>{{ current_month }} 소비 요약</h2>
+        <div>
+            <label for="monthSelect" style="font-weight: bold; margin-right: 5px;">분석할 월 선택:</label>
+            <select id="monthSelect" class="month-select" onchange="changeMonth()">
+                {% for m in available_months %}
+                    <option value="?year={{ m.year }}&month={{ m.month }}" {% if m.year == target_year and m.month == target_month %}selected{% endif %}>
+                        {{ m.label }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="total-amount-text">총 지출: {{ total_spending|intcomma }}원</div>
+    </div>
+
+    <div class="charts-row">
+        <div class="chart-col wide">
+            <h3>카테고리별 지출 규모</h3>
+            <p style="font-size: 0.85rem; color: #888; margin-bottom: 5px;">
+                작은 블록이 앞쪽에 배치됩니다. (마우스 드래그로 회전 가능)
+            </p>
+            <div id="echarts3D" style="width: 100%; height: 500px;"></div>
+        </div>
+
+        <div class="chart-col narrow">
+            <h3>📅 일별 지출 달력</h3>
+            <p style="font-size: 0.85rem; color: #888; margin-bottom: 5px;">
+                지출이 많을수록 <span style="color:#0d47a1; font-weight:bold;">진한 파란색</span>으로 표시됩니다.
+            </p>
+            <div id="calendarHeatmap" style="height: 500px; width: 100%;"></div>
+        </div>
+    </div>
+
+    <div class="table-section">
+        <h3>카테고리별 지출 총합 가계부</h3>
+        <table class="custom-table">
+            <thead><tr><th>카테고리</th><th class="text-right">총 지출 금액 (원)</th><th class="text-right">비중 (%)</th></tr></thead>
+            <tbody>
+                {% for item in category_table_data %}
+                <tr><td>{{ item.name }}</td><td class="text-right">{{ item.amount|intcomma }}</td><td class="text-right">{{ item.percent }}%</td></tr>
+                {% empty %}<tr><td colspan="3" style="text-align:center;">데이터 없음</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="table-section">
+        <h3>미분류 상세 내역 (검토 필요)</h3>
+        <table class="custom-table">
+            <thead><tr><th>날짜</th><th>거래처 (Description)</th><th class="text-right">금액 (원)</th></tr></thead>
+            <tbody>
+                {% for item in uncategorized_items %}
+                <tr><td>{{ item.date|date:"Y-m-d" }}</td><td>{{ item.description }}</td><td class="text-right">{{ item.amount|intcomma }}</td></tr>
+                {% empty %}<tr><td colspan="3" style="text-align: center; color: #999; padding:20px;">미분류 내역이 없습니다.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="table-section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+             <h3>최근 지출 내역 (5건)</h3>
+             <a href="{% url 'data_ingestion:input' %}" style="text-decoration:none; color:#007bff; font-weight:bold;">+ 지출 입력</a>
+        </div>
+        <table class="custom-table">
+            <thead><tr><th>날짜</th><th>내용</th><th>카테고리</th><th class="text-right">금액</th></tr></thead>
+            <tbody>
+                {% for expense in recent_expenses %}
+                <tr><td>{{ expense.date|date:"Y-m-d" }}</td><td>{{ expense.description }}</td><td><span style="background:#eee; padding:2px 8px; border-radius:10px; font-size:0.85rem;">{{ expense.category.name }}</span></td><td class="text-right">{{ expense.amount|intcomma }}원</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{{ treemap_data|json_script:"treemap-data" }}
+{{ heatmap_data|json_script:"heatmap-data" }}
+
+<script>
+    function changeMonth() {
+        const select = document.getElementById('monthSelect');
+        if (select.value) window.location.href = window.location.pathname + select.value;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const rawData = JSON.parse(document.getElementById('treemap-data').textContent);
+        const heatmapData = JSON.parse(document.getElementById('heatmap-data').textContent);
+
+        // [왼쪽] 3D 차트 (기존 유지)
+        if (rawData.length > 0) {
+            const chartDom = document.getElementById('echarts3D');
+            const myChart = echarts.init(chartDom);
+            const maxVal = Math.max(...rawData.map(d => d.amount));
+            const sortedData = [...rawData].sort((a, b) => a.amount - b.amount);
+            const dataCount = sortedData.length;
+            const rowSize = Math.ceil(Math.sqrt(dataCount)); 
+            
+            const preparedData = [];
+            sortedData.forEach((item, index) => {
+                const x = index % rowSize;
+                const y = Math.floor(index / rowSize);
+                const ratio = item.amount / maxVal;
+                const lightness = 85 - (ratio * 60);
+                const color = `hsl(211, 100%, ${lightness}%)`;
+                preparedData.push({
+                    value: [x, y, item.amount, item.category],
+                    itemStyle: { color: color }
+                });
+            });
+
+            const option = {
+                tooltip: {
+                    show: true,
+                    formatter: function (params) {
+                        return `<div style="text-align: left;"><strong>${params.data.value[3]}</strong><br/>${new Intl.NumberFormat('ko-KR').format(params.data.value[2])}원</div>`;
+                    }
+                },
+                visualMap: { show: false },
+                xAxis3D: { type: 'category', show: false },
+                yAxis3D: { type: 'category', show: false },
+                zAxis3D: { type: 'value', show: false },
+                grid3D: {
+                    boxWidth: 150, boxDepth: 150, boxHeight: 120,
+                    // 줌아웃 설정 유지
+                    viewControl: { 
+                        projection: 'orthographic', 
+                        alpha: 40, 
+                        beta: 30, 
+                        orthographicSize: 225, 
+                        autoRotate: false 
+                    },
+                    light: { main: { intensity: 0.4, shadow: false }, ambient: { intensity: 0.9 } }
+                },
+                series: [{
+                    type: 'bar3D',
+                    data: preparedData,
+                    shading: 'lambert',
+                    label: {
+                        show: true,
+                        textStyle: { fontSize: 14, borderWidth: 0, fontWeight: 'bold', color: '#fff' },
+                        formatter: function(params) { return params.value[3]; }
+                    },
+                    emphasis: { itemStyle: { opacity: 0.8 } }
+                }]
+            };
+            myChart.setOption(option);
+            window.addEventListener('resize', myChart.resize);
+        }
+
+        // 🌟🌟🌟 [오른쪽] ECharts 달력 히트맵 (윤곽선 검은색 통일) 🌟🌟🌟
+        const calendarDom = document.getElementById('calendarHeatmap');
+        const calendarChart = echarts.init(calendarDom);
+        
+        const dataNonZero = heatmapData.filter(item => item[1] > 0);
+        const dataZero = heatmapData.filter(item => item[1] === 0);
+
+        let maxDaily = 0;
+        if (dataNonZero.length > 0) maxDaily = Math.max(...dataNonZero.map(d => d[1]));
+        if (maxDaily === 0) maxDaily = 1;
+
+        const calOption = {
+            tooltip: {
+                formatter: function (params) {
+                    return `${params.value[0]}<br/>💰 ${new Intl.NumberFormat('ko-KR').format(params.value[1])}원`;
+                }
+            },
+            visualMap: {
+                type: 'continuous',
+                min: 1, 
+                max: maxDaily,
+                show: false, 
+                inRange: {
+                    color: ['#e3f2fd', '#90caf9', '#64b5f6', '#2196f3', '#0d47a1'] 
+                },
+                seriesIndex: [0] 
+            },
+            calendar: {
+                top: 60,    
+                left: 'center', 
+                orient: 'vertical', 
+                cellSize: [60, 60], 
+                range: '{{ current_month }}', 
+                itemStyle: {
+                    // 🌟 바깥 윤곽선 검은색
+                    borderWidth: 0.5,
+                    borderColor: '#000',
+                    color: '#fff' 
+                },
+                yearLabel: { show: false }, 
+                dayLabel: { 
+                    firstDay: 0, 
+                    nameMap: ['일', '월', '화', '수', '목', '금', '토'],
+                    margin: 10,
+                    color: '#666',
+                    fontWeight: 'bold',
+                    fontSize: 14
+                },
+                monthLabel: { show: false } 
+            },
+            series: [
+                {
+                    // [Series 1] 지출이 있는 날
+                    type: 'heatmap',
+                    coordinateSystem: 'calendar',
+                    data: dataNonZero,
+                    itemStyle: {
+                        // 🌟 안쪽 윤곽선 검은색
+                        borderColor: '#000',
+                        borderWidth: 0.5 
+                    },
+                    label: {
+                        show: true,
+                        formatter: function (params) {
+                            return echarts.number.parseDate(params.value[0]).getDate(); 
+                        },
+                        color: '#333',
+                        fontSize: 14
+                    }
+                },
+                {
+                    // [Series 2] 지출이 없는 날 (0원)
+                    type: 'heatmap',
+                    coordinateSystem: 'calendar',
+                    data: dataZero,
+                    itemStyle: {
+                        color: '#ffffff', 
+                        // 🌟 안쪽 윤곽선 검은색
+                        borderColor: '#000',
+                        borderWidth: 0.5 
+                    },
+                    label: {
+                        show: true,
+                        formatter: function (params) {
+                            return echarts.number.parseDate(params.value[0]).getDate(); 
+                        },
+                        color: '#999', 
+                        fontSize: 14
+                    }
+                }
+            ]
+        };
+        calendarChart.setOption(calOption);
+        window.addEventListener('resize', calendarChart.resize);
+    });
+</script>
+{% endblock %}

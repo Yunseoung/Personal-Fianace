@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}지출 기록 입력{% endblock %}
+
+{% block content %}
+    <h2>새 지출 기록 {% if record %}수정{% else %}입력{% endif %}</h2>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        {% for field in form %}
+            <div style="margin-bottom: 15px;">
+                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                
+                {{ field }}
+                
+                {% if field.help_text %}
+                    <small style="color: #666; display: block; margin-top: 5px;">{{ field.help_text }}</small>
+                {% endif %}
+
+                {% for error in field.errors %}
+                    <p style="color: red; font-size: 0.9em;">{{ error }}</p>
+                {% endfor %}
+            </div>
+        {% endfor %}
+        
+        <button type="submit">저장</button>
+        
+        {% if record %}
+            <form method="post" action="{% url 'data_ingestion:delete' record.id %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit" onclick="return confirm('정말로 이 기록을 삭제하시겠습니까?');">삭제</button>
+            </form>
+        {% endif %}
+    </form>
+{% endblock %}

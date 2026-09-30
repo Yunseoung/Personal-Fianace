@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}소비 분석 리포트{% endblock %}
+
+{% block content %}
+<style>
+    .report-container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    
+    .section-card {
+        background-color: #fff;
+        padding: 30px;
+        border-radius: 15px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        position: relative; /* 초기화 버튼 배치를 위해 추가 */
+    }
+
+    /* 초기화 버튼 스타일 */
+    .reset-btn {
+        position: absolute;
+        top: 25px;
+        right: 30px;
+        padding: 6px 14px;
+        font-size: 0.8rem;
+        background-color: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        cursor: pointer;
+        color: #495057;
+        font-weight: 600;
+        transition: all 0.2s;
+        z-index: 10;
+    }
+    .reset-btn:hover { background-color: #f1f3f5; border-color: #adb5bd; }
+
+    .ai-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 15px rgba(118, 75, 162, 0.3);
+        text-align: center;
+    }
+    .ai-card h3 { margin: 0 0 10px 0; font-size: 1.2rem; opacity: 0.9; }
+    .ai-card .prediction-value { font-size: 3rem; font-weight: 800; margin: 10px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .ai-card .method-badge { 
+        background-color: rgba(255,255,255,0.2); 
+        padding: 5px 15px; 
+        border-radius: 20px; 
+        font-size: 0.9rem; 
+        display: inline-block;
+        backdrop-filter: blur(5px);
+    }
+
+    .current-status-card {
+        text-align: center;
+        padding: 40px 20px;
+        background-color: #fff;
+        border-radius: 15px;
+        border: 2px solid #007bff;
+        box-shadow: 0 4px 15px rgba(0,123,255,0.1);
+        margin-bottom: 40px;
+    }
+    .main-amount { font-size: 3rem; font-weight: 800; color: #333; margin: 10px 0; }
+    .status-badge { display: inline-block; padding: 10px 20px; border-radius: 50px; font-weight: bold; font-size: 1.1rem; margin-top: 10px; }
+    .status-badge.success { background-color: #e6f9ed; color: #28a745; border: 1px solid #c3e6cb; }
+    .status-badge.danger { background-color: #fce8e6; color: #dc3545; border: 1px solid #f5c6cb; }
+
+    .divider { border-top: 1px dashed #ccc; margin: 30px 0; }
+    .filter-area { text-align: center; margin-bottom: 20px; }
+    select { padding: 8px 15px; font-size: 1rem; border-radius: 5px; border: 1px solid #ccc; }
+
+    .chart-grid {
+        display: block;
+        gap: 20px;
+    }
+    
+    .overflow-alert {
+        background-color: #ffebee;
+        color: #c62828;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 15px;
+        font-weight: bold;
+        border-left: 5px solid #c62828;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+    }
+</style>
+
+<div class="report-container">
+    <h2 style="text-align: center; margin-bottom: 30px;">📊 소비 분석 리포트</h2>
+
+    {% if error %}
+        <div class="status-badge default" style="display:block; text-align:center;">{{ error }}</div>
+    {% else %}
+    
+        <div class="section-card">
+            <button class="reset-btn" onclick="resetTrendChart()">🔄 전체 보기</button>
+            <h3 style="margin-bottom: 5px; text-align: center;">📉 최근 10개월 소비 추이 & 이동평균</h3>
+            <p style="text-align: center; font-size: 0.85rem; color: #adb5bd; margin-bottom: 20px;">
+                가로 점선은 <b>이번 달 예측치</b>이며, 추세선과의 교차점을 통해 흐름을 비교해보세요.
+            </p>
+            <div style="height: 350px;">
+                <canvas id="recentMonthsChart"></canvas>
+            </div>
+        </div>
+
+        <div class="ai-card">
+            <h3>🤖 {{ real_current_month }}월 지출 예측</h3>
+            <div class="prediction-value">
+                {% if ai_predicted_amount > 0 %}
+                    {{ ai_predicted_amount|intcomma }}원
+                {% else %}
+                    분석 불가
+                {% endif %}
+            </div>
+            <div class="method-badge">{{ prediction_method }}</div>
+            {% if safety_triggered %}
+                <div style="margin-top: 15px; font-size: 0.9rem; color: #ffcccc; background-color: rgba(255, 0, 0, 0.1); padding: 8px; border-radius: 8px;">
+                    ※ 지난달 대비 변동폭이 50%를 초과하여 신뢰할 수 없으므로 예측을 중단했습니다.
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="current-status-card">
+            <h3 style="margin: 0; color: #007bff;">현재({{ real_current_month }}) 소비 상태</h3>
+            <p style="color: #666; margin-top: 5px;">실시간 누적 지출액</p>
+            <div class="main-amount">{{ real_current_spending|intcomma }}원</div>
+            <div class="status-badge {{ real_status }}">{{ real_advice }}</div>
+            <p style="color: #888; margin-top: 15px; font-size: 0.9rem;">
+                (최근 3개월 평균 지출액: <strong>{{ last_3_avg|intcomma }}원</strong>)
+            </p>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section-card" style="background-color: #f8f9fa;">
+            <div class="filter-area">
+                <label for="month-select" style="font-weight: bold; margin-right: 10px;">상세 조회할 월 선택:</label>
+                <select id="month-select" onchange="changeMonth(this.value)">
+                    {% for m in available_months %}
+                        <option value="{% url 'prediction:report_month' m.year m.month %}"
+                                {% if m.year == target_year and m.month == target_month %}selected{% endif %}>
+                            {{ m.label }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <h3 style="text-align: center; margin-bottom: 20px;">📅 {{ target_month_str }} 상세 분석</h3>
+            <p style="text-align: center; color: #666; margin-bottom: 30px;">
+                총 지출: <strong>{{ target_month_total|intcomma }}원</strong>
+            </p>
+            
+            <div class="chart-grid">
+                <div style="background: white; padding: 20px; border-radius: 10px; border: 1px solid #ddd; margin: 0 auto; max-width: 800px;">
+                    <h4 style="text-align: center; margin-bottom: 15px; color: #555;">📊 주차별 지출 흐름 (Current Fill)</h4>
+                    
+                    {% if is_overflow %}
+                        <div class="overflow-alert">
+                            🚨 주의: 이번달 총 지출액이 해당 월 보다 <br>
+                            {{ overflow_amount|intcomma }}원 초과했습니다!
+                        </div>
+                    {% else %}
+                        <p style="font-size:0.8rem; color:#888; text-align:center; margin-top:-10px; margin-bottom:10px;">
+                            {{ target_month }}월 패턴(그릇)에 현재 누적 지출(물)을 부었을 때
+                        </p>
+                    {% endif %}
+
+                    <canvas id="weeklyBarChart" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+
+        {{ recent_months_labels|json_script:"recent-labels" }}
+        {{ recent_months_data|json_script:"recent-data" }}
+        {{ recent_ma_data|json_script:"recent-ma-data" }}
+        {{ ai_predicted_amount|json_script:"predicted-amount" }} {{ chart_labels|json_script:"weekly-labels" }}
+        {{ weekly_filled|json_script:"weekly-filled" }}
+        {{ weekly_empty|json_script:"weekly-empty" }}
+        {{ weekly_overflow|json_script:"weekly-overflow" }}
+        
+        <script>
+            function changeMonth(url) {
+                if (url) location.href = url;
+            }
+
+            // 🌟 상단 그래프 상호작용 및 예측선을 위한 전역 변수
+            const originLabels = JSON.parse(document.getElementById('recent-labels').textContent);
+            const originData = JSON.parse(document.getElementById('recent-data').textContent);
+            const predictedAmt = JSON.parse(document.getElementById('predicted-amount').textContent); // 예측값 파싱
+            let currentLabels = [...originLabels];
+            let currentData = [...originData];
+            let trendChart;
+
+            // 🌟 끊김 없는 이동평균 계산기
+            function calculateMA(data) {
+                const windowSize = 3;
+                return data.map((_, idx, arr) => {
+                    const start = Math.max(0, idx - windowSize + 1);
+                    const subset = arr.slice(start, idx + 1);
+                    return subset.reduce((a, b) => a + b, 0) / subset.length;
+                });
+            }
+
+            function resetTrendChart() {
+                currentLabels = [...originLabels];
+                currentData = [...originData];
+                updateTrendChart();
+            }
+
+            function updateTrendChart() {
+                trendChart.data.labels = currentLabels;
+                trendChart.data.datasets[1].data = currentData;
+                trendChart.data.datasets[0].data = calculateMA(currentData);
+                // 예측 가로선 데이터 업데이트
+                trendChart.data.datasets[2].data = new Array(currentLabels.length).fill(predictedAmt);
+                trendChart.update();
+            }
+
+            document.addEventListener('DOMContentLoaded', function() {
+                // 1. 최근 소비 추이 차트
+                const ctxRecent = document.getElementById('recentMonthsChart').getContext('2d');
+                const barGradient = ctxRecent.createLinearGradient(0, 0, 0, 400);
+                barGradient.addColorStop(0, 'rgba(180, 180, 180, 0.4)');
+                barGradient.addColorStop(1, 'rgba(180, 180, 180, 0.1)');
+
+                trendChart = new Chart(ctxRecent, {
+                    data: {
+                        labels: currentLabels,
+                        datasets: [
+                            {
+                                type: 'line',
+                                label: '소비 흐름(이동평균)',
+                                data: calculateMA(currentData),
+                                borderColor: '#4e73df',
+                                borderWidth: 4,
+                                pointRadius: 2,
+                                pointBackgroundColor: '#4e73df',
+                                tension: 0.4,
+                                fill: false,
+                                order: 2 // 중간 레이어
+                            },
+                            {
+                                type: 'bar',
+                                label: '월별 실지출',
+                                data: currentData,
+                                backgroundColor: barGradient,
+                                borderColor: '#ced4da',
+                                borderWidth: 1,
+                                borderRadius: 8,
+                                barPercentage: 0.5,
+                                order: 3 // 하단 레이어
+                            },
+                            {
+                                // 🌟 이번달 지출 예측 가로 점선
+                                type: 'line',
+                                label: '이번달 예측 지출선',
+                                data: new Array(currentLabels.length).fill(predictedAmt),
+                                borderColor: '#dc3545',
+                                borderDash: [5, 5], // 점선
+                                borderWidth: 3,
+                                pointRadius: 0,
+                                fill: false,
+                                order: 1 // 최상단 레이어
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        onClick: (evt, activeElements) => {
+                            if (activeElements.length > 0) {
+                                const index = activeElements[0].index;
+                                if (confirm(`${currentLabels[index]} 데이터를 분석에서 제외하시겠습니까?`)) {
+                                    currentLabels.splice(index, 1);
+                                    currentData.splice(index, 1);
+                                    updateTrendChart();
+                                }
+                            }
+                        },
+                        onHover: (event, chartElement) => {
+                            event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: { boxWidth: 12, usePointStyle: true, padding: 20 }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) label += ': ';
+                                        if (context.parsed.y !== null) {
+                                            label += new Intl.NumberFormat('ko-KR').format(context.parsed.y) + '원';
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { grid: { display: false } },
+                            y: {
+                                beginAtZero: false,
+                                grace: '10%',
+                                ticks: {
+                                    callback: function(value) {
+                                        return (value / 10000).toLocaleString() + '만';
+                                    }
+                                },
+                                grid: { color: 'rgba(0, 0, 0, 0.05)', drawBorder: false }
+                            }
+                        }
+                    }
+                });
+
+                // 2. 주차별 막대 차트 (범례 클릭 차단 유지)
+                const ctxWeekly = document.getElementById('weeklyBarChart').getContext('2d');
+                const weeklyDatasets = [
+                    { label: '현재 소비 누적', data: JSON.parse(document.getElementById('weekly-filled').textContent), backgroundColor: '#56CCF2', barPercentage: 0.6 },
+                    { label: '과거 소비 패턴 (잔여)', data: JSON.parse(document.getElementById('weekly-empty').textContent), backgroundColor: '#E0E0E0', barPercentage: 0.6 }
+                ];
+                const overflowData = JSON.parse(document.getElementById('weekly-overflow').textContent);
+                if (overflowData.some(val => val > 0)) {
+                    weeklyDatasets.push({ label: '초과 지출 (Warning)', data: overflowData, backgroundColor: '#dc3545', barPercentage: 0.6 });
+                }
+
+                new Chart(ctxWeekly, {
+                    type: 'bar',
+                    data: { labels: JSON.parse(document.getElementById('weekly-labels').textContent), datasets: weeklyDatasets },
+                    options: {
+                        responsive: true,
+                        plugins: { 
+                            legend: { 
+                                position: 'bottom',
+                                onClick: null 
+                            } 
+                        },
+                        scales: { 
+                            x: { stacked: true },
+                            y: { 
+                                stacked: true,
+                                beginAtZero: true, 
+                                ticks: { callback: (v) => new Intl.NumberFormat('ko-KR').format(v) } 
+                            } 
+                        }
+                    }
+                });
+            });
+        </script>
+
+    {% endif %}
+    
+    <div style="text-align: center; margin-top: 40px;">
+        <a href="{% url 'dashboard:summary' %}" style="text-decoration: none; color: #666;">← 대시보드로 돌아가기</a>
+    </div>
+</div>
+{% endblock %}
